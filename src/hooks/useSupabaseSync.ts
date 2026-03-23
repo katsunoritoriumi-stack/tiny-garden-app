@@ -29,6 +29,8 @@ export function useSupabaseSync() {
   const { days, applyRemoteUpdate, applyRemoteRoomUpdate } = useAppStore()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const channelRef = useRef<any>(null)
+  const pendingUpserts = useRef<Set<string>>(new Set())
+  const pendingRoomUpserts = useRef<Set<string>>(new Set())
   const today = format(new Date(), 'yyyy-MM-dd')
 
   // 今日のエリアデータ（依存配列に使用）
@@ -101,6 +103,11 @@ export function useSupabaseSync() {
             if (payload.eventType === 'DELETE') return
             const row = payload.new as Record<string, unknown>
             if (!row) return
+            const key = `${row.area_id}:${row.room_id}:${row.task_id}`
+            if (pendingUpserts.current.has(key)) {
+              pendingUpserts.current.delete(key)
+              return
+            }
             applyRemoteUpdate(
               'today',
               row.area_id as string,
@@ -119,6 +126,11 @@ export function useSupabaseSync() {
             if (payload.eventType === 'DELETE') return
             const row = payload.new as Record<string, unknown>
             if (!row) return
+            const roomKey = `${row.area_id}:${row.room_id}`
+            if (pendingRoomUpserts.current.has(roomKey)) {
+              pendingRoomUpserts.current.delete(roomKey)
+              return
+            }
             applyRemoteRoomUpdate('today', row.area_id as string, row.room_id as string, {
               workMode: (row.work_mode as WorkMode | null) ?? null,
               assignedStaff: (row.assigned_staff as string | null) ?? null,
@@ -172,11 +184,23 @@ export function useSupabaseSync() {
         )
       )
 
+      // upsert前にキーを登録（自分のエコーを無視するため）
+      for (const row of taskRows) {
+        pendingUpserts.current.add(`${row.area_id}:${row.room_id}:${row.task_id}`)
+      }
+
       const { error: taskError } = await supabase
         .from('task_states')
         .upsert(taskRows, { onConflict: 'session_date,area_id,room_id,task_id' })
 
       if (taskError) console.warn('[Supabase] task upsert失敗:', taskError.message)
+
+      // 500ms後にキーを削除（Realtimeイベントが届く前に消えないよう余裕を持たせる）
+      setTimeout(() => {
+        for (const row of taskRows) {
+          pendingUpserts.current.delete(`${row.area_id}:${row.room_id}:${row.task_id}`)
+        }
+      }, 500)
 
       // room_states upsert（部屋レベルの状態）
       const roomRows = todayAreas.flatMap(area =>
@@ -196,11 +220,23 @@ export function useSupabaseSync() {
         }))
       )
 
+      // upsert前にキーを登録
+      for (const row of roomRows) {
+        pendingRoomUpserts.current.add(`${row.area_id}:${row.room_id}`)
+      }
+
       const { error: roomError } = await supabase
         .from('room_states')
         .upsert(roomRows, { onConflict: 'session_date,area_id,room_id' })
 
       if (roomError) console.warn('[Supabase] room upsert失敗:', roomError.message)
+
+      // 500ms後にキーを削除
+      setTimeout(() => {
+        for (const row of roomRows) {
+          pendingRoomUpserts.current.delete(`${row.area_id}:${row.room_id}`)
+        }
+      }, 500)
     }, 500)
 
     return () => clearTimeout(timeout)
