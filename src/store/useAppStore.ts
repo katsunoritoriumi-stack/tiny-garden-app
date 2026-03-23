@@ -269,14 +269,17 @@ export const useAppStore = create<AppStore>()(
         set(state => ({
           days: updateDayAreas(state.days, dateKey, areaId, roomId, room => ({
             ...room,
-            tasks: room.tasks.map(task =>
-              task.id !== taskId ? task : {
+            tasks: room.tasks.map(task => {
+              if (task.id !== taskId) return task
+              // 既存のタイムスタンプより古いデータは無視する
+              if (task.updatedAt && updatedAt && updatedAt < task.updatedAt) return task
+              return {
                 ...task,
                 status,
                 updatedAt,
                 updatedBy,
               }
-            ),
+            }),
           })),
         }))
       },
@@ -307,15 +310,17 @@ export const useAppStore = create<AppStore>()(
       /** リモート（Supabase）からの部屋状態更新を反映 */
       applyRemoteRoomUpdate: (dateKey, areaId, roomId, patch) => {
         set(state => ({
-          days: updateDayAreas(state.days, dateKey, areaId, roomId, room => ({
-            ...room,
-            ...(patch.workMode !== undefined && { workMode: patch.workMode }),
-            ...(patch.assignedStaff !== undefined && { assignedStaff: patch.assignedStaff ?? undefined }),
-            ...(patch.checkInInfo !== undefined && { checkInInfo: { ...room.checkInInfo, ...patch.checkInInfo } }),
-            ...(patch.cleanStatus !== undefined && { cleanStatus: patch.cleanStatus }),
-            ...(patch.keyStatus !== undefined && { keyStatus: patch.keyStatus }),
-            ...(patch.note !== undefined && { note: patch.note ?? undefined }),
-          })),
+          days: updateDayAreas(state.days, dateKey, areaId, roomId, room => {
+            return {
+              ...room,
+              ...(patch.workMode !== undefined && { workMode: patch.workMode }),
+              ...(patch.assignedStaff !== undefined && { assignedStaff: patch.assignedStaff ?? undefined }),
+              ...(patch.checkInInfo !== undefined && { checkInInfo: { ...room.checkInInfo, ...patch.checkInInfo } }),
+              ...(patch.cleanStatus !== undefined && { cleanStatus: patch.cleanStatus }),
+              ...(patch.keyStatus !== undefined && { keyStatus: patch.keyStatus }),
+              ...(patch.note !== undefined && { note: patch.note ?? undefined }),
+            }
+          }),
         }))
       },
     }),
