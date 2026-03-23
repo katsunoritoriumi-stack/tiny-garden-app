@@ -52,6 +52,7 @@ export function useSupabaseSync() {
 
       if (!cancelled && taskData) {
         for (const row of taskData) {
+          if (row.session_date !== today) continue
           applyRemoteUpdate(
             'today',
             row.area_id,
@@ -74,6 +75,7 @@ export function useSupabaseSync() {
 
       if (!cancelled && roomData) {
         for (const row of roomData) {
+          if (row.session_date !== today) continue
           applyRemoteRoomUpdate('today', row.area_id, row.room_id, {
             workMode: (row.work_mode as WorkMode | null) ?? null,
             assignedStaff: row.assigned_staff ?? null,
