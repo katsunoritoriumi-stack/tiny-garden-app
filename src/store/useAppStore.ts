@@ -13,7 +13,7 @@ function isDone(status: TaskStatus): boolean {
 
 function makeDayLabel(date: Date, key: DateKey): string {
   const monthDay = format(date, 'M/d', { locale: ja })
-  const labels: Record<DateKey, string> = { today: '今日', tomorrow: '明日', day_after: '明後日' }
+  const labels: Record<DateKey, string> = { today: '今日', tomorrow: '明日' }
   return `${monthDay}（${labels[key]}）`
 }
 
@@ -28,11 +28,6 @@ function makeInitialDays(): Record<DateKey, DayData> {
     tomorrow: {
       date: format(addDays(today, 1), 'yyyy-MM-dd'),
       label: makeDayLabel(addDays(today, 1), 'tomorrow'),
-      areas: makeInitialAreas(),
-    },
-    day_after: {
-      date: format(addDays(today, 2), 'yyyy-MM-dd'),
-      label: makeDayLabel(addDays(today, 2), 'day_after'),
       areas: makeInitialAreas(),
     },
   }
@@ -85,6 +80,7 @@ interface AppStore {
   setAssignedStaff: (dateKey: DateKey, areaId: string, roomId: string, staff: string) => void
   setNote: (dateKey: DateKey, areaId: string, roomId: string, note: string) => void
   completeAllTasks: (dateKey: DateKey, areaId: string, roomId: string) => void
+  resetRoomTasks: (dateKey: DateKey, areaId: string, roomId: string) => void
   setCleanStatus: (dateKey: DateKey, areaId: string, roomId: string, status: CleanStatus) => void
   setKeyStatus: (dateKey: DateKey, areaId: string, roomId: string, status: KeyStatus) => void
   addStaff: (name: string) => void
@@ -100,6 +96,7 @@ interface AppStore {
     note?: string | null
   }) => void
   setLinenOrder: (dateKey: DateKey, order: Partial<LinenOrder>) => void
+  setDayNote: (dateKey: DateKey, note: string) => void
   setNextDayNote: (dateKey: DateKey, note: string) => void
 }
 
@@ -120,7 +117,6 @@ export const useAppStore = create<AppStore>()(
             ...room,
             tasks: room.tasks.map(task => {
               if (task.id !== taskId) return task
-              // key_open/key_closed タスクは toggleTask では変更しない
               if (task.status === 'key_open' || task.status === 'key_closed') return task
               const next: TaskStatus = task.status === 'done' ? 'pending' : 'done'
               return { ...task, status: next, updatedAt: new Date().toISOString() }
@@ -192,7 +188,6 @@ export const useAppStore = create<AppStore>()(
             ...room,
             tasks: room.tasks.map(task => {
               if (isDone(task.status)) return task
-              // 鍵確認タスクは key_closed に
               const newStatus: TaskStatus = task.label === '鍵確認' ? 'key_closed' : 'done'
               return { ...task, status: newStatus, updatedAt: new Date().toISOString() }
             }),
@@ -200,7 +195,21 @@ export const useAppStore = create<AppStore>()(
         }))
       },
 
-      /** サニタリー掃除ステータスを設定 */
+      /** 全タスクを pending にリセット */
+      resetRoomTasks: (dateKey, areaId, roomId) => {
+        set(state => ({
+          days: updateDayAreas(state.days, dateKey, areaId, roomId, room => ({
+            ...room,
+            tasks: room.tasks.map(task => ({
+              ...task,
+              status: 'pending' as TaskStatus,
+              updatedAt: new Date().toISOString(),
+            })),
+          })),
+        }))
+      },
+
+      /** 掃除ステータスを設定 */
       setCleanStatus: (dateKey, areaId, roomId, status) => {
         set(state => ({
           days: updateDayAreas(state.days, dateKey, areaId, roomId, room => ({
@@ -210,7 +219,7 @@ export const useAppStore = create<AppStore>()(
         }))
       },
 
-      /** サニタリー鍵ステータスを設定 */
+      /** 鍵ステータスを設定 */
       setKeyStatus: (dateKey, areaId, roomId, status) => {
         set(state => ({
           days: updateDayAreas(state.days, dateKey, areaId, roomId, room => ({
@@ -239,7 +248,6 @@ export const useAppStore = create<AppStore>()(
         set(state => {
           const today = new Date()
           const newTomorrow = addDays(today, 1)
-          const newDayAfter = addDays(today, 2)
           const newDays: Record<DateKey, DayData> = {
             today: {
               ...state.days.tomorrow,
@@ -247,20 +255,12 @@ export const useAppStore = create<AppStore>()(
               label: makeDayLabel(today, 'today'),
             },
             tomorrow: {
-              ...state.days.day_after,
               date: format(newTomorrow, 'yyyy-MM-dd'),
               label: makeDayLabel(newTomorrow, 'tomorrow'),
-            },
-            day_after: {
-              date: format(newDayAfter, 'yyyy-MM-dd'),
-              label: makeDayLabel(newDayAfter, 'day_after'),
               areas: makeInitialAreas(),
             },
           }
-          return {
-            days: newDays,
-            activeDateKey: 'today',
-          }
+          return { days: newDays, activeDateKey: 'today' }
         })
       },
 
@@ -271,14 +271,8 @@ export const useAppStore = create<AppStore>()(
             ...room,
             tasks: room.tasks.map(task => {
               if (task.id !== taskId) return task
-              // 既存のタイムスタンプより古いデータは無視する
               if (task.updatedAt && updatedAt && updatedAt < task.updatedAt) return task
-              return {
-                ...task,
-                status,
-                updatedAt,
-                updatedBy,
-              }
+              return { ...task, status, updatedAt, updatedBy }
             }),
           })),
         }))
@@ -293,6 +287,16 @@ export const useAppStore = create<AppStore>()(
               ...state.days[dateKey],
               linenOrder: { cabin: null, lodge: null, ...state.days[dateKey].linenOrder, ...order },
             },
+          },
+        }))
+      },
+
+      /** 日付レベルの備考を設定 */
+      setDayNote: (dateKey, note) => {
+        set(state => ({
+          days: {
+            ...state.days,
+            [dateKey]: { ...state.days[dateKey], note },
           },
         }))
       },
@@ -325,11 +329,10 @@ export const useAppStore = create<AppStore>()(
       },
     }),
     {
-      name: 'tinygarden-staff-v5',
+      name: 'tinygarden-staff-v7',
       onRehydrateStorage: () => (state) => {
         if (!state) return
         const today = format(new Date(), 'yyyy-MM-dd')
-        // 保存済みの today の日付が現在の日付と異なればローテート
         if (state.days.today.date !== today) {
           state.rotateDay()
         }

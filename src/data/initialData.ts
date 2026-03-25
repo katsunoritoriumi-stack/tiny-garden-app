@@ -55,6 +55,9 @@ const LAKESIDE_TASKS = ['ゴミ拾い']
 // ─── お風呂 タスク ────────────────────────────────────────────────────────────
 const BATH_TASKS = ['脱衣所', '洗面台', '洗い場', 'トイレ', '棚・床', '廊下', 'Wチェック']
 
+// ─── ロッジB1外の流し タスク ──────────────────────────────────────────────────
+const LODGE_SINK_TASKS = ['ゴミ', '流し', '消毒', '忘れ物チェック']
+
 // ─── サニタリー部屋生成ヘルパー ─────────────────────────────────────────────
 function makeSanitaryRoom(id: string, name: string, areaType: 'sanitary'): Room {
   return { id, name, areaType, workMode: null, tasks: [], cleanStatus: 'unset', keyStatus: 'unset' }
@@ -182,12 +185,12 @@ export function makeInitialAreas(): Area[] {
       ],
     },
 
-    // ⑩ ロッジ客室（室数はここで調整: L01〜L06）
+    // ⑩ ロッジ客室（201〜207）
     {
       id: 'lodge',
       name: 'ロッジ客室',
       areaType: 'lodge',
-      rooms: ['L01', 'L02', 'L03', 'L04', 'L05', 'L06'].map(id => ({
+      rooms: ['201', '202', '203', '204', '205', '206', '207'].map(id => ({
         id,
         areaType: 'lodge' as const,
         workMode: null,
@@ -195,7 +198,24 @@ export function makeInitialAreas(): Area[] {
       })),
     },
 
-    // ⑪ 湖畔サイト
+    // ⑪ ロッジB1外の流し
+    {
+      id: 'lodge_sink',
+      name: 'ロッジB1外の流し',
+      areaType: 'lodge_sink',
+      rooms: [
+        {
+          id: 'lodge_sink_main',
+          name: 'B1外の流し',
+          areaType: 'lodge_sink' as const,
+          workMode: null,
+          tasks: makeTasks(LODGE_SINK_TASKS),
+          cleanStatus: 'unset' as const,
+        },
+      ],
+    },
+
+    // ⑫ 湖畔サイト
     {
       id: 'lakeside',
       name: '湖畔サイト',
@@ -206,17 +226,18 @@ export function makeInitialAreas(): Area[] {
         workMode: null,
         tasks: makeTasks(LAKESIDE_TASKS),
         keyStatus: 'unset' as const,
+        cleanStatus: 'unset' as const,
       })),
     },
 
-    // ⑫ お風呂
+    // ⑬ お風呂
     {
       id: 'bath',
       name: 'お風呂',
       areaType: 'bath',
       rooms: [
-        { id: 'bath_female', name: '女湯', areaType: 'bath' as const, workMode: null, tasks: makeTasks(BATH_TASKS) },
-        { id: 'bath_male',   name: '男湯', areaType: 'bath' as const, workMode: null, tasks: makeTasks(BATH_TASKS) },
+        { id: 'bath_female', name: '女湯', areaType: 'bath' as const, workMode: null, tasks: makeTasks(BATH_TASKS), cleanStatus: 'unset' as const },
+        { id: 'bath_male',   name: '男湯', areaType: 'bath' as const, workMode: null, tasks: makeTasks(BATH_TASKS), cleanStatus: 'unset' as const },
       ],
     },
   ]

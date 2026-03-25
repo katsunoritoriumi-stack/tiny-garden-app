@@ -1,4 +1,4 @@
-// カレンダー画面 - 過去の記録を月別で振り返る
+// カレンダー画面 - 過去の記録を月別に振り返る
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -23,10 +23,12 @@ const isSupabaseConfigured = Boolean(
   SUPABASE_KEY !== 'your-anon-key-here'
 )
 
+// 日付ごとの集計データ
 interface DaySummary {
   date: string
-  doneCount: number
-  totalCount: number
+  taskDone: number
+  taskTotal: number
+  bookingCount: number
 }
 
 const WEEKDAYS = ['月', '火', '水', '木', '金', '土', '日']
@@ -41,8 +43,7 @@ export default function CalendarPage() {
   const monthStart = startOfMonth(currentMonth)
   const monthEnd = endOfMonth(currentMonth)
   const days = eachDayOfInterval({ start: monthStart, end: monthEnd })
-  // 月曜始まり: (日曜=0 → 6, 月曜=1 → 0, ... 土曜=6 → 5)
-  const firstDayOfWeek = (getDay(monthStart) + 6) % 7
+  const firstDayOfWeek = (getDay(monthStart) + 6) % 7 // 0=月〜6=日
 
   useEffect(() => {
     if (!isSupabaseConfigured) return
@@ -56,30 +57,46 @@ export default function CalendarPage() {
       const startDate = format(monthStart, 'yyyy-MM-dd')
       const endDate = format(monthEnd, 'yyyy-MM-dd')
 
-      const { data, error } = await supabase
-        .from('task_states')
-        .select('session_date, status')
-        .gte('session_date', startDate)
-        .lte('session_date', endDate)
+      // task_states と bookings を並行取得
+      const [taskRes, bookingRes] = await Promise.all([
+        supabase
+          .from('task_states')
+          .select('session_date, status')
+          .gte('session_date', startDate)
+          .lte('session_date', endDate),
+        supabase
+          .from('bookings')
+          .select('session_date')
+          .gte('session_date', startDate)
+          .lte('session_date', endDate),
+      ])
 
-      if (error) {
-        console.warn('[Calendar] task_states取得失敗:', error.message)
-        return
-      }
+      if (taskRes.error) console.warn('[Calendar] task_states:', taskRes.error.message)
+      if (bookingRes.error) console.warn('[Calendar] bookings:', bookingRes.error.message)
 
       const summaryMap = new Map<string, DaySummary>()
-      for (const row of data ?? []) {
+
+      // タスク集計
+      for (const row of taskRes.data ?? []) {
         const dk = row.session_date as string
         if (!summaryMap.has(dk)) {
-          summaryMap.set(dk, { date: dk, doneCount: 0, totalCount: 0 })
+          summaryMap.set(dk, { date: dk, taskDone: 0, taskTotal: 0, bookingCount: 0 })
         }
         const s = summaryMap.get(dk)!
-        s.totalCount++
+        s.taskTotal++
         const st = row.status as string
-        if (st === 'done' || st === 'key_open' || st === 'key_closed') {
-          s.doneCount++
-        }
+        if (st === 'done' || st === 'key_open' || st === 'key_closed') s.taskDone++
       }
+
+      // 予約件数集計
+      for (const row of bookingRes.data ?? []) {
+        const dk = row.session_date as string
+        if (!summaryMap.has(dk)) {
+          summaryMap.set(dk, { date: dk, taskDone: 0, taskTotal: 0, bookingCount: 0 })
+        }
+        summaryMap.get(dk)!.bookingCount++
+      }
+
       setDaySummaries(summaryMap)
     } finally {
       setLoading(false)
@@ -88,24 +105,27 @@ export default function CalendarPage() {
 
   return (
     <div style={{ padding: '16px', paddingBottom: '40px' }}>
-      {/* ページタイトル */}
+
+      {/* ─── ページタイトル ─── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
         <button onClick={() => navigate('/')} style={backButtonStyle}>
           ← 戻る
         </button>
         <div style={{ flex: 1, textAlign: 'center' }}>
-          <p style={{ fontSize: '10px', letterSpacing: '0.2em', color: 'var(--text-secondary)', margin: 0, fontWeight: 700 }}>
+          <p style={{
+            fontSize: '10px', fontWeight: 700, letterSpacing: '0.2em',
+            color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase',
+          }}>
             HISTORY
           </p>
           <h2 style={{ fontSize: '16px', fontWeight: 900, color: 'var(--text-primary)', margin: 0 }}>
             過去の記録
           </h2>
         </div>
-        {/* スペーサー（左右対称） */}
-        <div style={{ width: '56px' }} />
+        <div style={{ width: '62px' }} />
       </div>
 
-      {/* Supabase未設定の場合 */}
+      {/* ─── Supabase 未設定メッセージ ─── */}
       {!isSupabaseConfigured && (
         <div style={{
           background: 'var(--bg-secondary)',
@@ -116,12 +136,14 @@ export default function CalendarPage() {
           color: 'var(--text-secondary)',
           fontSize: '13px',
           marginBottom: '16px',
+          lineHeight: 1.6,
         }}>
-          Supabaseが設定されていません。<br />記録データを表示するにはSupabase連携が必要です。
+          Supabase が未設定です。<br />
+          記録を表示するには環境変数の設定が必要です。
         </div>
       )}
 
-      {/* 月ナビゲーション */}
+      {/* ─── 月ナビゲーション ─── */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -147,15 +169,13 @@ export default function CalendarPage() {
         </button>
       </div>
 
-      {/* カレンダー本体 */}
-      <div
-        style={{
-          background: 'var(--bg-secondary)',
-          border: '1px solid var(--border)',
-          borderRadius: '12px',
-          padding: '12px',
-        }}
-      >
+      {/* ─── カレンダー本体 ─── */}
+      <div style={{
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
+        borderRadius: '12px',
+        padding: '12px',
+      }}>
         {/* 曜日ヘッダー */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '6px' }}>
           {WEEKDAYS.map((d, i) => (
@@ -165,12 +185,12 @@ export default function CalendarPage() {
                 textAlign: 'center',
                 fontSize: '11px',
                 fontWeight: 700,
+                padding: '3px 0',
                 color: i === 5
                   ? 'var(--accent-blue)'
                   : i === 6
                     ? 'var(--accent-red)'
                     : 'var(--text-secondary)',
-                padding: '4px 0',
               }}
             >
               {d}
@@ -182,102 +202,103 @@ export default function CalendarPage() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '3px' }}>
           {/* 先頭パディング */}
           {Array.from({ length: firstDayOfWeek }).map((_, i) => (
-            <div key={`pad-${i}`} style={{ minHeight: '52px' }} />
+            <div key={`pad-${i}`} style={{ minHeight: '58px' }} />
           ))}
 
           {/* 日付セル */}
           {days.map(day => {
             const dateStr = format(day, 'yyyy-MM-dd')
             const summary = daySummaries.get(dateStr)
-            const hasData = !!summary && summary.totalCount > 0
-            const pct = hasData
-              ? Math.round((summary.doneCount / summary.totalCount) * 100)
+            const hasTask = !!summary && summary.taskTotal > 0
+            const hasBooking = !!summary && summary.bookingCount > 0
+            const hasAny = hasTask || hasBooking
+            const pct = hasTask
+              ? Math.round((summary!.taskDone / summary!.taskTotal) * 100)
               : 0
             const todayFlag = isToday(day)
-            const dayOfWeek = (getDay(day) + 6) % 7 // 0=月...5=土,6=日
-            const isSat = dayOfWeek === 5
-            const isSun = dayOfWeek === 6
+            const dow = (getDay(day) + 6) % 7
+            const isSat = dow === 5
+            const isSun = dow === 6
 
             return (
               <button
                 key={dateStr}
-                onClick={() => { if (hasData) setSelectedDate(dateStr) }}
-                disabled={!hasData}
+                onClick={() => { if (hasAny) setSelectedDate(dateStr) }}
+                disabled={!hasAny}
                 style={{
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
-                  justifyContent: 'flex-start',
                   padding: '5px 2px 4px',
                   borderRadius: '8px',
                   border: todayFlag
                     ? '2px solid var(--accent-teal)'
                     : '1px solid transparent',
-                  background: hasData
+                  background: hasAny
                     ? 'var(--bg-tertiary)'
                     : todayFlag
                       ? 'rgba(78,205,196,0.06)'
                       : 'transparent',
-                  cursor: hasData ? 'pointer' : 'default',
-                  minHeight: '52px',
+                  cursor: hasAny ? 'pointer' : 'default',
+                  minHeight: '58px',
                   gap: '3px',
                   transition: 'background 0.1s',
+                  position: 'relative',
                 }}
               >
                 {/* 日付数字 */}
-                <span
-                  style={{
-                    fontSize: '13px',
-                    fontWeight: todayFlag ? 900 : 400,
-                    color: todayFlag
-                      ? 'var(--accent-teal)'
-                      : isSat
-                        ? 'var(--accent-blue)'
-                        : isSun
-                          ? 'var(--accent-red)'
-                          : 'var(--text-primary)',
-                    lineHeight: 1,
-                  }}
-                >
+                <span style={{
+                  fontSize: '13px',
+                  fontWeight: todayFlag ? 900 : 400,
+                  lineHeight: 1,
+                  color: todayFlag
+                    ? 'var(--accent-teal)'
+                    : isSat
+                      ? 'var(--accent-blue)'
+                      : isSun
+                        ? 'var(--accent-red)'
+                        : 'var(--text-primary)',
+                }}>
                   {format(day, 'd')}
                 </span>
 
-                {/* 記録あり: 進捗バー + パーセント */}
-                {hasData && (
+                {/* タスク進捗バー */}
+                {hasTask && (
                   <>
-                    <div
-                      style={{
-                        width: '100%',
-                        height: '3px',
-                        background: 'var(--border)',
-                        borderRadius: '2px',
-                        overflow: 'hidden',
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: `${pct}%`,
-                          height: '100%',
-                          background: pct === 100
-                            ? 'var(--accent-green)'
-                            : 'var(--accent-teal)',
-                          transition: 'width 0.3s',
-                        }}
-                      />
+                    <div style={{
+                      width: '90%',
+                      height: '3px',
+                      background: 'var(--border)',
+                      borderRadius: '2px',
+                      overflow: 'hidden',
+                    }}>
+                      <div style={{
+                        width: `${pct}%`,
+                        height: '100%',
+                        background: pct === 100 ? 'var(--accent-green)' : 'var(--accent-teal)',
+                      }} />
                     </div>
-                    <span
-                      style={{
-                        fontSize: '9px',
-                        fontWeight: 700,
-                        color: pct === 100
-                          ? 'var(--accent-green)'
-                          : 'var(--accent-teal)',
-                        lineHeight: 1,
-                      }}
-                    >
+                    <span style={{
+                      fontSize: '9px',
+                      fontWeight: 700,
+                      color: pct === 100 ? 'var(--accent-green)' : 'var(--accent-teal)',
+                      lineHeight: 1,
+                    }}>
                       {pct}%
                     </span>
                   </>
+                )}
+
+                {/* 予約バッジ */}
+                {hasBooking && (
+                  <span style={{
+                    fontSize: '9px',
+                    color: 'var(--accent-yellow)',
+                    fontWeight: 700,
+                    lineHeight: 1,
+                  }}>
+                    {summary!.bookingCount}件
+                  </span>
                 )}
               </button>
             )
@@ -285,41 +306,38 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      {/* 凡例 */}
+      {/* ─── 凡例 ─── */}
       <div style={{
         display: 'flex',
         gap: '16px',
         marginTop: '12px',
         fontSize: '11px',
         color: 'var(--text-secondary)',
-        paddingLeft: '4px',
+        paddingLeft: '2px',
+        flexWrap: 'wrap',
       }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
           <span style={{ display: 'inline-block', width: '20px', height: '3px', background: 'var(--accent-teal)', borderRadius: '2px' }} />
-          進行中
+          作業中
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
           <span style={{ display: 'inline-block', width: '20px', height: '3px', background: 'var(--accent-green)', borderRadius: '2px' }} />
           完了
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-          <span style={{ display: 'inline-block', width: '20px', height: '3px', background: 'var(--border)', borderRadius: '2px' }} />
-          記録なし
+          <span style={{ fontSize: '9px', fontWeight: 700, color: 'var(--accent-yellow)' }}>N件</span>
+          予約あり
         </span>
       </div>
 
+      {/* ─── ローディング ─── */}
       {loading && (
-        <p style={{
-          textAlign: 'center',
-          color: 'var(--text-secondary)',
-          fontSize: '13px',
-          marginTop: '16px',
-        }}>
+        <p style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px', marginTop: '16px' }}>
           読み込み中…
         </p>
       )}
 
-      {/* 日付詳細モーダル */}
+      {/* ─── 日付詳細モーダル ─── */}
       {selectedDate && (
         <CalendarDayModal
           date={selectedDate}
@@ -330,6 +348,8 @@ export default function CalendarPage() {
   )
 }
 
+// ─── スタイル定数 ─────────────────────────────────────────────────────────────
+
 const backButtonStyle: React.CSSProperties = {
   background: 'transparent',
   border: '1px solid var(--border)',
@@ -337,6 +357,7 @@ const backButtonStyle: React.CSSProperties = {
   color: 'var(--text-secondary)',
   padding: '6px 12px',
   fontSize: '13px',
+  fontWeight: 700,
   cursor: 'pointer',
   minHeight: '36px',
   whiteSpace: 'nowrap',

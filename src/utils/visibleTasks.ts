@@ -27,8 +27,15 @@ export function isLakesiteRoomDone(room: Room): boolean {
   return allTasksDone && powerSet
 }
 
-// お風呂部屋の完了判定（全タスク完了）
+// お風呂部屋の完了判定（掃除ボタン押下済み + 全タスク完了）
 export function isBathRoomDone(room: Room): boolean {
+  if ((room.cleanStatus ?? 'unset') === 'unset') return false
+  return room.tasks.length > 0 && room.tasks.every(t => isDone(t.status))
+}
+
+// ロッジB1外の流しの完了判定（掃除ボタン押下済み + 全タスク完了）
+export function isLodgeSinkDone(room: Room): boolean {
+  if ((room.cleanStatus ?? 'unset') === 'unset') return false
   return room.tasks.length > 0 && room.tasks.every(t => isDone(t.status))
 }
 
@@ -41,7 +48,10 @@ export function getAreaPendingCount(area: Area): number {
     return area.rooms.filter(r => !isLakesiteRoomDone(r)).length
   }
   if (area.areaType === 'bath') {
-    return area.rooms.flatMap(r => r.tasks).filter(t => !isDone(t.status)).length
+    return area.rooms.filter(r => !isBathRoomDone(r)).length
+  }
+  if (area.areaType === 'lodge_sink') {
+    return area.rooms.filter(r => !isLodgeSinkDone(r)).length
   }
   // lodge, comfort, pet, eco, sauna, workstation, auto, free
   const selectedRooms = area.rooms.filter(r => r.workMode != null)

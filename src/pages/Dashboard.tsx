@@ -7,7 +7,7 @@ import StaffModal from '../components/StaffModal'
 import RoomBottomSheet from '../components/RoomBottomSheet'
 
 export default function Dashboard() {
-  const { days, activeDateKey, staffList, addStaff, removeStaff } = useAppStore()
+  const { days, activeDateKey, staffList, addStaff, removeStaff, setDayNote, setNextDayNote } = useAppStore()
   const navigate = useNavigate()
   const [showStaffModal, setShowStaffModal] = useState(false)
   const [openedRoom, setOpenedRoom] = useState<{ areaId: string; roomId: string } | null>(null)
@@ -21,6 +21,19 @@ export default function Dashboard() {
     .filter(r => r.checkInInfo?.time || r.checkInInfo?.adults !== undefined || r.checkInInfo?.children !== undefined)
   const ciTotalAdults = allCiRooms.reduce((s, r) => s + (r.checkInInfo?.adults ?? 0), 0)
   const ciTotalChildren = allCiRooms.reduce((s, r) => s + (r.checkInInfo?.children ?? 0), 0)
+
+  const textareaStyle: React.CSSProperties = {
+    width: '100%',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
+    borderRadius: '8px',
+    color: 'var(--text-primary)',
+    padding: '8px 10px',
+    fontSize: '14px',
+    resize: 'vertical',
+    outline: 'none',
+    boxSizing: 'border-box',
+  }
 
   return (
     <div style={{ padding: '16px', paddingBottom: '32px' }}>
@@ -87,6 +100,34 @@ export default function Dashboard() {
             onRoomBadgeClick={(areaId, roomId) => setOpenedRoom({ areaId, roomId })}
           />
         ))}
+      </div>
+
+      {/* 備考セクション */}
+      <div style={{ marginTop: '24px' }}>
+        <p style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '8px' }}>
+          📝 備考
+        </p>
+        <textarea
+          value={activeDay.note ?? ''}
+          onChange={e => setDayNote(activeDateKey, e.target.value)}
+          placeholder="本日の備考を入力…"
+          rows={3}
+          style={textareaStyle}
+        />
+      </div>
+
+      {/* 翌日への申し送りセクション */}
+      <div style={{ marginTop: '16px' }}>
+        <p style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '8px' }}>
+          📋 翌日への申し送り（清掃後に記入）
+        </p>
+        <textarea
+          value={activeDay.nextDayNote ?? ''}
+          onChange={e => setNextDayNote(activeDateKey, e.target.value)}
+          placeholder="翌日スタッフへの申し送り事項を入力…"
+          rows={4}
+          style={textareaStyle}
+        />
       </div>
 
       {/* スタッフモーダル */}

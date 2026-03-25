@@ -71,7 +71,7 @@ export default function SanitaryAreaCard({ area, onSetCleanStatus, onSetKeyStatu
       <div
         style={{
           background: 'var(--bg-secondary)',
-          border: `1px solid ${allDone ? 'var(--accent-green)' : 'var(--border)'}`,
+          border: '1px solid var(--border)',
           borderRadius: '12px',
           padding: '16px',
           transition: 'border-color 0.3s',
@@ -113,10 +113,10 @@ export default function SanitaryAreaCard({ area, onSetCleanStatus, onSetKeyStatu
                     style={{
                       padding: '8px 14px',
                       minHeight: '40px',
-                      border: `2px solid ${isNeeded ? 'var(--accent-teal)' : 'var(--border)'}`,
+                      border: `2px solid ${isNeeded ? 'var(--accent-green)' : 'var(--border)'}`,
                       borderRadius: '8px',
-                      background: isNeeded ? 'rgba(78,205,196,0.2)' : 'transparent',
-                      color: isNeeded ? 'var(--accent-teal)' : 'var(--text-secondary)',
+                      background: isNeeded ? 'rgba(46,204,113,0.2)' : 'transparent',
+                      color: isNeeded ? 'var(--accent-green)' : 'var(--text-secondary)',
                       fontSize: '13px',
                       fontWeight: 700,
                       cursor: isDoneStatus ? 'default' : 'pointer',
@@ -124,7 +124,7 @@ export default function SanitaryAreaCard({ area, onSetCleanStatus, onSetKeyStatu
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    {isNeeded ? '掃除 ✓' : '掃除'}
+                    {isNeeded ? '🧹 掃除 ✓' : '🧹 掃除'}
                   </button>
 
                   {/* 鍵ラベル */}

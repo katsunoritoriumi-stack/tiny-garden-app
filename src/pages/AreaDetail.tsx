@@ -7,9 +7,10 @@ import SanitaryAreaCard from '../components/SanitaryAreaCard'
 import LakesiteAreaCard from '../components/LakesiteAreaCard'
 import BathAreaCard from '../components/BathAreaCard'
 import LodgeAreaCard from '../components/LodgeAreaCard'
+import LodgeSinkAreaCard from '../components/LodgeSinkAreaCard'
 import ProgressBar from '../components/ProgressBar'
 import FireworksFullScreen from '../components/FireworksFullScreen'
-import { getVisibleTasks, isDone, isSanitaryRoomDone, isLakesiteRoomDone } from '../utils/visibleTasks'
+import { getVisibleTasks, isDone, isSanitaryRoomDone, isLakesiteRoomDone, isBathRoomDone, isLodgeSinkDone } from '../utils/visibleTasks'
 
 export default function AreaDetail() {
   const { areaId } = useParams<{ areaId: string }>()
@@ -22,6 +23,7 @@ export default function AreaDetail() {
     setKeyState,
     setNote,
     completeAllTasks,
+    resetRoomTasks,
     setWorkMode,
     setCheckInInfo,
     setAssignedStaff,
@@ -36,7 +38,7 @@ export default function AreaDetail() {
   const activeDay = days[activeDateKey]
   const area = activeDay.areas.find(a => a.id === areaId)
 
-  // 進捗計算（area が undefined でも安全に動くよう null guard）
+  // 進捗計算
   const areaType = area?.areaType
   let doneCount = 0
   let totalTasks = 0
@@ -47,8 +49,15 @@ export default function AreaDetail() {
     } else if (areaType === 'lakeside') {
       doneCount = area.rooms.filter(r => isLakesiteRoomDone(r)).length
       totalTasks = area.rooms.length
-    } else if (areaType === 'bath' || areaType === 'lodge') {
-      const allT = area.rooms.flatMap(r => r.tasks)
+    } else if (areaType === 'bath') {
+      doneCount = area.rooms.filter(r => isBathRoomDone(r)).length
+      totalTasks = area.rooms.length
+    } else if (areaType === 'lodge_sink') {
+      doneCount = area.rooms.filter(r => isLodgeSinkDone(r)).length
+      totalTasks = area.rooms.length
+    } else if (areaType === 'lodge') {
+      const selectedRooms = area.rooms.filter(r => r.workMode != null)
+      const allT = selectedRooms.flatMap(r => r.tasks)
       doneCount = allT.filter(t => isDone(t.status)).length
       totalTasks = allT.length
     } else {
@@ -60,7 +69,6 @@ export default function AreaDetail() {
   }
   const percent = totalTasks > 0 ? Math.round((doneCount / totalTasks) * 100) : 0
 
-  // 全完了アニメーション監視
   useEffect(() => {
     if (!hasMountedRef.current) {
       hasMountedRef.current = true
@@ -75,7 +83,6 @@ export default function AreaDetail() {
     prevPercentRef.current = percent
   }, [percent, totalTasks])
 
-  // early return はすべての hooks の後
   if (!area) {
     return (
       <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)' }}>
@@ -103,16 +110,9 @@ export default function AreaDetail() {
           <button
             onClick={() => navigate('/')}
             style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--accent-teal)',
-              fontSize: '13px',
-              cursor: 'pointer',
-              padding: '0',
-              marginBottom: '8px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
+              background: 'none', border: 'none', color: 'var(--accent-teal)',
+              fontSize: '13px', cursor: 'pointer', padding: '0', marginBottom: '8px',
+              display: 'flex', alignItems: 'center', gap: '4px',
             }}
           >
             ← ダッシュボード
@@ -121,7 +121,6 @@ export default function AreaDetail() {
             {area.name}
           </h2>
 
-          {/* エリア全体の進捗 */}
           {totalTasks > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <div style={{ flex: 1 }}>
@@ -150,6 +149,7 @@ export default function AreaDetail() {
             onToggleTask={(roomId, taskId) => toggleTask(activeDateKey, area.id, roomId, taskId)}
             onSetCheckInInfo={(roomId, info) => setCheckInInfo(activeDateKey, area.id, roomId, info)}
             onSetKeyStatus={(roomId, status) => setKeyStatus(activeDateKey, area.id, roomId, status)}
+            onSetCleanStatus={(roomId, status) => setCleanStatus(activeDateKey, area.id, roomId, status)}
             onSetNote={(roomId, note) => setNote(activeDateKey, area.id, roomId, note)}
           />
         ) : areaType === 'bath' ? (
@@ -157,6 +157,22 @@ export default function AreaDetail() {
             area={area}
             onToggleTask={(roomId, taskId) => toggleTask(activeDateKey, area.id, roomId, taskId)}
             onCompleteAll={(roomId) => completeAllTasks(activeDateKey, area.id, roomId)}
+            onSetCleanStatus={(roomId, status) => setCleanStatus(activeDateKey, area.id, roomId, status)}
+            onResetClean={(roomId) => {
+              setCleanStatus(activeDateKey, area.id, roomId, 'unset')
+              resetRoomTasks(activeDateKey, area.id, roomId)
+            }}
+          />
+        ) : areaType === 'lodge_sink' ? (
+          <LodgeSinkAreaCard
+            area={area}
+            onToggleTask={(roomId, taskId) => toggleTask(activeDateKey, area.id, roomId, taskId)}
+            onCompleteAll={(roomId) => completeAllTasks(activeDateKey, area.id, roomId)}
+            onSetCleanStatus={(roomId, status) => setCleanStatus(activeDateKey, area.id, roomId, status)}
+            onResetClean={(roomId) => {
+              setCleanStatus(activeDateKey, area.id, roomId, 'unset')
+              resetRoomTasks(activeDateKey, area.id, roomId)
+            }}
           />
         ) : areaType === 'lodge' ? (
           <LodgeAreaCard
@@ -167,6 +183,7 @@ export default function AreaDetail() {
             onSetCheckInInfo={(roomId, info) => setCheckInInfo(activeDateKey, area.id, roomId, info)}
             onSetAssignedStaff={(roomId, staff) => setAssignedStaff(activeDateKey, area.id, roomId, staff)}
             onSetNote={(roomId, note) => setNote(activeDateKey, area.id, roomId, note)}
+            onSetWorkMode={(roomId, mode) => setWorkMode(activeDateKey, area.id, roomId, mode)}
           />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>

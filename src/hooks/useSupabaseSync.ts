@@ -1,15 +1,5 @@
 /**
- * Supabase リアルタイム同期フック
- *
- * 同期対象テーブル：
- *   - task_states  : タスクのステータス（done/pending/key_open/key_closed）
- *   - room_states  : 部屋レベルの状態（workMode, assignedStaff, checkInInfo, cleanStatus, keyStatus, note）
- *
- * 動作：
- *   - 起動時に今日のデータをSupabaseから取得してZustandに反映
- *   - 今日のデータが変更されると500msデバウンスでupsert
- *   - Supabase Realtimeで他端末の変更を購読し自動反映
- *   - VITE_SUPABASE_URL が未設定 or プレースホルダーの場合はオフラインモード
+ * Supabase 同期フック（競合状態修正版）
  */
 import { useEffect, useRef } from 'react'
 import { format } from 'date-fns'
@@ -25,218 +15,137 @@ const isSupabaseConfigured = Boolean(
   SUPABASE_KEY !== 'your-anon-key-here'
 )
 
+const POLL_INTERVAL = 5000
+
 export function useSupabaseSync() {
   const { days, applyRemoteUpdate, applyRemoteRoomUpdate } = useAppStore()
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const channelRef = useRef<any>(null)
-  const pendingUpserts = useRef<Set<string>>(new Set())
-  const pendingRoomUpserts = useRef<Set<string>>(new Set())
   const today = format(new Date(), 'yyyy-MM-dd')
-
-  // 今日のエリアデータ（依存配列に使用）
   const todayAreas = days['today'].areas
 
-  // ── 起動時：今日のデータ取得 & Realtime購読 ──────────────────────────────
-  useEffect(() => {
-    if (!isSupabaseConfigured) return
-    let cancelled = false
+  const isUpsertingRef = useRef(false)
+  const lastUpsertTimeRef = useRef<number>(0)
 
-    async function init() {
-      const { supabase } = await import('../lib/supabase')
+  async function fetchAndApply() {
+    if (isUpsertingRef.current) return
+    if (Date.now() - lastUpsertTimeRef.current < 1000) return
 
-      // ① 今日のタスク状態を取得
-      const { data: taskData, error: taskError } = await supabase
-        .from('task_states')
-        .select('*')
-        .eq('session_date', today)
+    const { supabase } = await import('../lib/supabase')
 
-      if (taskError) console.warn('[Supabase] task_states取得失敗:', taskError.message)
+    const { data: taskData, error: taskError } = await supabase
+      .from('task_states')
+      .select('*')
+      .eq('session_date', today)
 
-      if (!cancelled && taskData) {
-        for (const row of taskData) {
-          if (row.session_date !== today) continue
-          applyRemoteUpdate(
-            'today',
-            row.area_id,
-            row.room_id,
-            row.task_id,
-            row.status as TaskStatus,
-            row.updated_by ?? '',
-            row.updated_at,
-          )
-        }
-      }
-
-      // ② 今日の部屋状態を取得
-      const { data: roomData, error: roomError } = await supabase
-        .from('room_states')
-        .select('*')
-        .eq('session_date', today)
-
-      if (roomError) console.warn('[Supabase] room_states取得失敗:', roomError.message)
-
-      if (!cancelled && roomData) {
-        for (const row of roomData) {
-          if (row.session_date !== today) continue
-          applyRemoteRoomUpdate('today', row.area_id, row.room_id, {
-            workMode: (row.work_mode as WorkMode | null) ?? null,
-            assignedStaff: row.assigned_staff ?? null,
-            checkInInfo: {
-              time: row.check_in_time ?? undefined,
-              adults: row.check_in_adults ?? undefined,
-              children: row.check_in_children ?? undefined,
-            },
-            cleanStatus: row.clean_status as CleanStatus,
-            keyStatus: row.key_status as KeyStatus,
-            note: row.note ?? null,
-          })
-        }
-      }
-
-      // ③ Realtime購読（task_states + room_states）
-      const channel = supabase
-        .channel('tiny_garden_sync')
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'task_states', filter: `session_date=eq.${today}` },
-          (payload) => {
-            if (payload.eventType === 'DELETE') return
-            const row = payload.new as Record<string, unknown>
-            if (!row) return
-            const key = `${row.area_id}:${row.room_id}:${row.task_id}`
-            if (pendingUpserts.current.has(key)) {
-              pendingUpserts.current.delete(key)
-              return
-            }
-            applyRemoteUpdate(
-              'today',
-              row.area_id as string,
-              row.room_id as string,
-              row.task_id as string,
-              row.status as TaskStatus,
-              (row.updated_by as string) ?? '',
-              row.updated_at as string,
-            )
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'room_states', filter: `session_date=eq.${today}` },
-          (payload) => {
-            if (payload.eventType === 'DELETE') return
-            const row = payload.new as Record<string, unknown>
-            if (!row) return
-            const roomKey = `${row.area_id}:${row.room_id}`
-            if (pendingRoomUpserts.current.has(roomKey)) {
-              pendingRoomUpserts.current.delete(roomKey)
-              return
-            }
-            applyRemoteRoomUpdate('today', row.area_id as string, row.room_id as string, {
-              workMode: (row.work_mode as WorkMode | null) ?? null,
-              assignedStaff: (row.assigned_staff as string | null) ?? null,
-              checkInInfo: {
-                time: (row.check_in_time as string) ?? undefined,
-                adults: (row.check_in_adults as number) ?? undefined,
-                children: (row.check_in_children as number) ?? undefined,
-              },
-              cleanStatus: row.clean_status as CleanStatus,
-              keyStatus: row.key_status as KeyStatus,
-              note: (row.note as string | null) ?? null,
-            })
-          }
-        )
-        .subscribe()
-
-      channelRef.current = channel
+    if (taskError) {
+      console.warn('[Supabase] task_states取得失敗:', taskError.message)
+      return
     }
 
-    init()
+    if (taskData) {
+      for (const row of taskData) {
+        applyRemoteUpdate(
+          'today',
+          row.area_id,
+          row.room_id,
+          row.task_id,
+          row.status as TaskStatus,
+          row.updated_by ?? '',
+          row.updated_at,
+        )
+      }
+    }
 
-    return () => {
-      cancelled = true
-      if (channelRef.current) {
-        import('../lib/supabase').then(({ supabase }) => {
-          supabase.removeChannel(channelRef.current!)
+    const { data: roomData, error: roomError } = await supabase
+      .from('room_states')
+      .select('*')
+      .eq('session_date', today)
+
+    if (roomError) {
+      console.warn('[Supabase] room_states取得失敗:', roomError.message)
+      return
+    }
+
+    if (roomData) {
+      for (const row of roomData) {
+        applyRemoteRoomUpdate('today', row.area_id, row.room_id, {
+          workMode: (row.work_mode as WorkMode | null) ?? null,
+          assignedStaff: row.assigned_staff ?? null,
+          checkInInfo: {
+            time: row.check_in_time ?? undefined,
+            adults: row.check_in_adults ?? undefined,
+            children: row.check_in_children ?? undefined,
+          },
+          cleanStatus: row.clean_status as CleanStatus,
+          keyStatus: row.key_status as KeyStatus,
+          note: row.note ?? null,
         })
       }
     }
+  }
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return
+    fetchAndApply()
+    const intervalId = setInterval(fetchAndApply, POLL_INTERVAL)
+    return () => clearInterval(intervalId)
   }, [today]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── 今日のデータ変更時：Supabaseにupsert ─────────────────────────────────
   useEffect(() => {
     if (!isSupabaseConfigured) return
 
     const timeout = setTimeout(async () => {
-      const { supabase } = await import('../lib/supabase')
+      isUpsertingRef.current = true
 
-      // task_states upsert（タスクのステータスのみ）
-      const taskRows = todayAreas.flatMap(area =>
-        area.rooms.flatMap(room =>
-          room.tasks.map(task => ({
+      try {
+        const { supabase } = await import('../lib/supabase')
+
+        const taskRows = todayAreas.flatMap(area =>
+          area.rooms.flatMap(room =>
+            room.tasks.map(task => ({
+              session_date: today,
+              area_id: area.id,
+              room_id: room.id,
+              task_id: task.id,
+              status: task.status,
+              updated_by: task.updatedBy ?? null,
+              updated_at: task.updatedAt,
+            }))
+          )
+        )
+
+        const { error: taskError } = await supabase
+          .from('task_states')
+          .upsert(taskRows, { onConflict: 'session_date,area_id,room_id,task_id' })
+
+        if (taskError) console.warn('[Supabase] task upsert失敗:', taskError.message)
+
+        const roomRows = todayAreas.flatMap(area =>
+          area.rooms.map(room => ({
             session_date: today,
             area_id: area.id,
             room_id: room.id,
-            task_id: task.id,
-            status: task.status,
-            updated_by: task.updatedBy ?? null,
-            updated_at: task.updatedAt,
+            work_mode: room.workMode ?? null,
+            assigned_staff: room.assignedStaff ?? null,
+            check_in_time: room.checkInInfo?.time ?? null,
+            check_in_adults: room.checkInInfo?.adults ?? null,
+            check_in_children: room.checkInInfo?.children ?? null,
+            clean_status: room.cleanStatus ?? 'unset',
+            key_status: room.keyStatus ?? 'unset',
+            note: room.note ?? null,
+            updated_at: new Date().toISOString(),
           }))
         )
-      )
 
-      // upsert前にキーを登録（自分のエコーを無視するため）
-      for (const row of taskRows) {
-        pendingUpserts.current.add(`${row.area_id}:${row.room_id}:${row.task_id}`)
+        const { error: roomError } = await supabase
+          .from('room_states')
+          .upsert(roomRows, { onConflict: 'session_date,area_id,room_id' })
+
+        if (roomError) console.warn('[Supabase] room upsert失敗:', roomError.message)
+
+      } finally {
+        isUpsertingRef.current = false
+        lastUpsertTimeRef.current = Date.now()
       }
-
-      const { error: taskError } = await supabase
-        .from('task_states')
-        .upsert(taskRows, { onConflict: 'session_date,area_id,room_id,task_id' })
-
-      if (taskError) console.warn('[Supabase] task upsert失敗:', taskError.message)
-
-      // 500ms後にキーを削除（Realtimeイベントが届く前に消えないよう余裕を持たせる）
-      setTimeout(() => {
-        for (const row of taskRows) {
-          pendingUpserts.current.delete(`${row.area_id}:${row.room_id}:${row.task_id}`)
-        }
-      }, 500)
-
-      // room_states upsert（部屋レベルの状態）
-      const roomRows = todayAreas.flatMap(area =>
-        area.rooms.map(room => ({
-          session_date: today,
-          area_id: area.id,
-          room_id: room.id,
-          work_mode: room.workMode ?? null,
-          assigned_staff: room.assignedStaff ?? null,
-          check_in_time: room.checkInInfo?.time ?? null,
-          check_in_adults: room.checkInInfo?.adults ?? null,
-          check_in_children: room.checkInInfo?.children ?? null,
-          clean_status: room.cleanStatus ?? 'unset',
-          key_status: room.keyStatus ?? 'unset',
-          note: room.note ?? null,
-          updated_at: new Date().toISOString(),
-        }))
-      )
-
-      // upsert前にキーを登録
-      for (const row of roomRows) {
-        pendingRoomUpserts.current.add(`${row.area_id}:${row.room_id}`)
-      }
-
-      const { error: roomError } = await supabase
-        .from('room_states')
-        .upsert(roomRows, { onConflict: 'session_date,area_id,room_id' })
-
-      if (roomError) console.warn('[Supabase] room upsert失敗:', roomError.message)
-
-      // 500ms後にキーを削除
-      setTimeout(() => {
-        for (const row of roomRows) {
-          pendingRoomUpserts.current.delete(`${row.area_id}:${row.room_id}`)
-        }
-      }, 500)
     }, 500)
 
     return () => clearTimeout(timeout)
