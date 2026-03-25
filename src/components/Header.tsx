@@ -1,10 +1,12 @@
 // ヘッダーコンポーネント
+import { useNavigate } from 'react-router-dom'
 import ProgressBar from './ProgressBar'
 import { useAppStore } from '../store/useAppStore'
 import { getVisibleTasks, isDone, isSanitaryRoomDone, isLakesiteRoomDone, isBathRoomDone, getAreaPendingCount } from '../utils/visibleTasks'
 import type { DateKey } from '../types'
 
 export default function Header() {
+  const navigate = useNavigate()
   const { days, activeDateKey, setActiveDateKey } = useAppStore()
 
   // アクティブな日の全体進捗
@@ -21,9 +23,8 @@ export default function Header() {
       doneCount += area.rooms.filter(r => isLakesiteRoomDone(r)).length
       totalCount += area.rooms.length
     } else if (area.areaType === 'bath') {
-      const tasks = area.rooms.flatMap(r => r.tasks)
-      doneCount += tasks.filter(t => isDone(t.status)).length
-      totalCount += tasks.length
+      doneCount += area.rooms.filter(r => isBathRoomDone(r)).length
+      totalCount += area.rooms.length
     } else {
       const selected = area.rooms.filter(r => r.workMode != null)
       const tasks = selected.flatMap(r => getVisibleTasks(r))
@@ -39,7 +40,7 @@ export default function Header() {
     return dayData.areas.reduce((sum, area) => sum + getAreaPendingCount(area), 0)
   }
 
-  const DATE_KEYS: DateKey[] = ['today', 'tomorrow', 'day_after']
+  const DATE_KEYS: DateKey[] = ['today', 'tomorrow']
 
   return (
     <header
@@ -53,13 +54,34 @@ export default function Header() {
       }}
     >
       {/* タイトル行 */}
-      <div style={{ marginBottom: '8px' }}>
-        <p style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.2em', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
-          Staff Management
-        </p>
-        <h1 style={{ fontSize: '18px', fontWeight: 900, color: 'var(--text-primary)', lineHeight: 1.2, marginTop: '2px' }}>
-          TINY GARDEN 蓼科
-        </h1>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '8px' }}>
+        <div>
+          <p style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.2em', color: 'var(--text-secondary)', textTransform: 'uppercase', margin: 0 }}>
+            Staff Management
+          </p>
+          <h1 style={{ fontSize: '18px', fontWeight: 900, color: 'var(--text-primary)', lineHeight: 1.2, marginTop: '2px', marginBottom: 0 }}>
+            TINY GARDEN 蓼科
+          </h1>
+        </div>
+        <button
+          onClick={() => navigate('/calendar')}
+          style={{
+            background: 'transparent',
+            border: '1px solid var(--border)',
+            borderRadius: '8px',
+            color: 'var(--text-secondary)',
+            padding: '5px 10px',
+            fontSize: '12px',
+            fontWeight: 700,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            minHeight: '36px',
+          }}
+        >
+          📅 記録
+        </button>
       </div>
 
       {/* 日付タブ */}
@@ -73,39 +95,21 @@ export default function Header() {
               key={key}
               onClick={() => setActiveDateKey(key)}
               style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '4px',
-                padding: '6px 4px',
-                minHeight: '40px',
-                borderRadius: '8px',
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                gap: '4px', padding: '6px 4px', minHeight: '40px', borderRadius: '8px',
                 border: `2px solid ${isActive ? 'var(--accent-teal)' : 'var(--border)'}`,
                 background: isActive ? 'rgba(100,200,180,0.12)' : 'transparent',
                 color: isActive ? 'var(--accent-teal)' : 'var(--text-secondary)',
-                fontSize: '12px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                transition: 'all 0.15s',
-                position: 'relative',
+                fontSize: '12px', fontWeight: 700, cursor: 'pointer', transition: 'all 0.15s', position: 'relative',
               }}
             >
               <span>{dayData.label}</span>
               {pending > 0 && (
                 <span
                   style={{
-                    background: 'var(--accent-red)',
-                    color: '#fff',
-                    borderRadius: '999px',
-                    fontSize: '10px',
-                    fontWeight: 700,
-                    minWidth: '18px',
-                    height: '18px',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: '0 4px',
+                    background: 'var(--accent-red)', color: '#fff', borderRadius: '999px',
+                    fontSize: '10px', fontWeight: 700, minWidth: '18px', height: '18px',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px',
                   }}
                 >
                   {pending}

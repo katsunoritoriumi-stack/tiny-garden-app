@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Header from './components/Header'
 import Dashboard from './pages/Dashboard'
 import AreaDetail from './pages/AreaDetail'
+import CalendarPage from './pages/CalendarPage'
 import { useSupabaseSync } from './hooks/useSupabaseSync'
 
 function AppContent() {
@@ -16,6 +17,7 @@ function AppContent() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/area/:areaId" element={<AreaDetail />} />
+          <Route path="/calendar" element={<CalendarPage />} />
         </Routes>
       </main>
     </div>
